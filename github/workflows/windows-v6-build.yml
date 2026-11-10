@@ -1,5 +1,5 @@
 
-name: Makhzani POS V7 - Windows Installer
+name: Makhzani POS V8 - Windows Build
 
 on:
   workflow_dispatch:
@@ -12,12 +12,12 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build Makhzani POS
+    name: Build Makhzani POS V8
     runs-on: windows-latest
     timeout-minutes: 90
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup pnpm
@@ -31,16 +31,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Locate Makhzani project
+      - name: Find or extract project
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
           $project = $null
 
           $workspace = Get-ChildItem $root -Filter "pnpm-workspace.yaml" -Recurse -File |
-            Where-Object {
-              $_.FullName -notmatch '\\(node_modules|\.git)\\'
-            } |
+            Where-Object { $_.FullName -notmatch '\\(node_modules|\.git)\\' } |
             Select-Object -First 1
 
           if ($workspace) {
@@ -49,18 +47,16 @@ jobs:
 
           if (-not $project) {
             $zip = Get-ChildItem $root -Filter "*.zip" -File |
-              Where-Object {
-                $_.Name -like "*V7*"
-              } |
+              Where-Object { $_.Name -like "*V8*" } |
               Select-Object -First 1
 
             if (-not $zip) {
-              throw "Project ZIP or pnpm workspace not found."
+              throw "لم يتم العثور على مجلد المشروع أو ملف ZIP V8"
             }
 
-            $extract = Join-Path $env:RUNNER_TEMP "MakhzaniExtract"
+            $extract = Join-Path $env:RUNNER_TEMP "MakhzaniV8"
             New-Item -ItemType Directory -Force $extract | Out-Null
-            Expand-Archive $zip.FullName $extract -Force
+            Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
 
             $workspace = Get-ChildItem $extract -Filter "pnpm-workspace.yaml" -Recurse -File |
               Select-Object -First 1
@@ -70,26 +66,28 @@ jobs:
             }
           }
 
-          if (-not $project) {
-            throw "Makhzani project directory not found."
+          if (-not $project -or -not (Test-Path (Join-Path $project "package.json"))) {
+            throw "تعذر العثور على ملف package.json الرئيسي"
           }
 
-          if (-not (Test-Path "$project/package.json")) {
-            throw "Root package.json not found."
+          if (-not (Test-Path (Join-Path $project "artifacts/makhzani-pos/package.json"))) {
+            throw "مجلد تطبيق مخزني غير موجود"
           }
 
           "PROJECT_DIR=$project" | Out-File $env:GITHUB_ENV -Append
-          Write-Host "Project: $project"
+          Write-Host "Project directory: $project"
 
       - name: Install dependencies
-        working-directory: ${{ env.PROJECT_DIR }}
+        shell: pwsh
         run: pnpm install --no-frozen-lockfile
-
-      - name: Build Windows application
         working-directory: ${{ env.PROJECT_DIR }}
-        run: pnpm --filter @workspace/makhzani-pos desktop:dist
 
-      - name: Locate installer
+      - name: Build Windows installer
+        shell: pwsh
+        run: pnpm --filter @workspace/makhzani-pos desktop:dist
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Find EXE installer
         shell: pwsh
         run: |
           $project = $env:PROJECT_DIR
@@ -102,15 +100,12 @@ jobs:
           )
 
           if ($files.Count -eq 0) {
-            Write-Host "No EXE installer found."
-            Write-Host "Build directories:"
+            Write-Host "لم يتم العثور على ملف EXE."
+            Write-Host "مجلدات البناء:"
             Get-ChildItem $project -Directory -Recurse |
-              Where-Object {
-                $_.Name -match 'release|dist|win-unpacked'
-              } |
+              Where-Object { $_.Name -match 'release|dist|win-unpacked' } |
               Select-Object -ExpandProperty FullName
-
-            throw "Windows installer was not generated."
+            throw "لم يتم إنشاء ملف تثبيت Windows"
           }
 
           $output = Join-Path $env:GITHUB_WORKSPACE "installer-output"
@@ -118,14 +113,13 @@ jobs:
 
           foreach ($file in $files) {
             Copy-Item $file.FullName $output -Force
-            Write-Host "Found: $($file.FullName)"
+            Write-Host "Installer found: $($file.FullName)"
           }
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-V7-Windows
+          name: Makhzani-POS-V8-Windows
           path: installer-output/*.exe
           if-no-files-found: error
           retention-days: 30
-
