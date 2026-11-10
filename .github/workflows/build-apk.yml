@@ -1,13 +1,130 @@
-```yaml
-name: Test APK Build
+
+name: Makhzani POS V7 - Windows Installer
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build-windows:
+    name: Build Makhzani POS
+    runs-on: windows-latest
+    timeout-minutes: 90
+
     steps:
-      - name: Test
-        run: echo "YAML OK"
-```
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Locate Makhzani project
+        shell: pwsh
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $project = $null
+
+          $workspace = Get-ChildItem $root -Filter "pnpm-workspace.yaml" -Recurse -File |
+            Where-Object {
+              $_.FullName -notmatch '\\(node_modules|\.git)\\'
+            } |
+            Select-Object -First 1
+
+          if ($workspace) {
+            $project = $workspace.Directory.FullName
+          }
+
+          if (-not $project) {
+            $zip = Get-ChildItem $root -Filter "*.zip" -File |
+              Where-Object {
+                $_.Name -like "*V7*"
+              } |
+              Select-Object -First 1
+
+            if (-not $zip) {
+              throw "Project ZIP or pnpm workspace not found."
+            }
+
+            $extract = Join-Path $env:RUNNER_TEMP "MakhzaniExtract"
+            New-Item -ItemType Directory -Force $extract | Out-Null
+            Expand-Archive $zip.FullName $extract -Force
+
+            $workspace = Get-ChildItem $extract -Filter "pnpm-workspace.yaml" -Recurse -File |
+              Select-Object -First 1
+
+            if ($workspace) {
+              $project = $workspace.Directory.FullName
+            }
+          }
+
+          if (-not $project) {
+            throw "Makhzani project directory not found."
+          }
+
+          if (-not (Test-Path "$project/package.json")) {
+            throw "Root package.json not found."
+          }
+
+          "PROJECT_DIR=$project" | Out-File $env:GITHUB_ENV -Append
+          Write-Host "Project: $project"
+
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Windows application
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: pnpm --filter @workspace/makhzani-pos desktop:dist
+
+      - name: Locate installer
+        shell: pwsh
+        run: |
+          $project = $env:PROJECT_DIR
+
+          $files = @(
+            Get-ChildItem $project -Filter "*.exe" -Recurse -File |
+            Where-Object {
+              $_.FullName -notmatch '\\(node_modules|\.git)\\'
+            }
+          )
+
+          if ($files.Count -eq 0) {
+            Write-Host "No EXE installer found."
+            Write-Host "Build directories:"
+            Get-ChildItem $project -Directory -Recurse |
+              Where-Object {
+                $_.Name -match 'release|dist|win-unpacked'
+              } |
+              Select-Object -ExpandProperty FullName
+
+            throw "Windows installer was not generated."
+          }
+
+          $output = Join-Path $env:GITHUB_WORKSPACE "installer-output"
+          New-Item -ItemType Directory -Force $output | Out-Null
+
+          foreach ($file in $files) {
+            Copy-Item $file.FullName $output -Force
+            Write-Host "Found: $($file.FullName)"
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Makhzani-POS-V7-Windows
+          path: installer-output/*.exe
+          if-no-files-found: error
+          retention-days: 30
