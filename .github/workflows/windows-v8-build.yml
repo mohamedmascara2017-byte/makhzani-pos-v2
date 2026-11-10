@@ -1,6 +1,5 @@
 
-
-name: Makhzani POS V8.1 - Windows Installer
+name: Makhzani POS V8.2 - Windows Installer
 
 on:
   workflow_dispatch:
@@ -13,7 +12,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build Makhzani POS V8.1
+    name: Build Makhzani POS V8.2
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -32,78 +31,78 @@ jobs:
         with:
           node-version: 22
 
-      - name: Find and extract V8.1 project
+      - name: Extract V8.2 project
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
-          $project = $null
+          $zipName = "Makhzani_POS_V8_2_USB_Bluetooth_Scanner_Fix.zip"
+          $zip = Join-Path $root $zipName
 
-          $zip = Get-ChildItem $root -Filter "Makhzani_POS_V8_1_Barcode_Camera_Fix.zip" -File |
+          if (-not (Test-Path $zip)) {
+            throw "لم يتم العثور على ملف V8.2 ZIP: $zipName"
+          }
+
+          $extract = Join-Path $env:RUNNER_TEMP "MakhzaniV82"
+          New-Item -ItemType Directory -Force $extract | Out-Null
+
+          Expand-Archive -Path $zip -DestinationPath $extract -Force
+
+          $workspace = Get-ChildItem $extract -Filter "pnpm-workspace.yaml" -Recurse -File |
             Select-Object -First 1
 
-          if ($zip) {
-            $extract = Join-Path $env:RUNNER_TEMP "MakhzaniV81"
-            New-Item -ItemType Directory -Force $extract | Out-Null
-            Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
-
-            $workspace = Get-ChildItem $extract -Filter "pnpm-workspace.yaml" -Recurse -File |
-              Select-Object -First 1
-
-            if ($workspace) {
-              $project = $workspace.Directory.FullName
-            }
+          if (-not $workspace) {
+            throw "ملف pnpm-workspace.yaml غير موجود."
           }
 
-          if (-not $project) {
-            $workspace = Get-ChildItem $root -Filter "pnpm-workspace.yaml" -Recurse -File |
-              Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|_temp)\\' } |
-              Select-Object -First 1
+          $project = $workspace.Directory.FullName
+          $app = Join-Path $project "artifacts/makhzani-pos"
 
-            if ($workspace) {
-              $project = $workspace.Directory.FullName
-            }
+          if (-not (Test-Path (Join-Path $project "package.json"))) {
+            throw "ملف package.json الرئيسي غير موجود."
           }
 
-          if (-not $project -or -not (Test-Path (Join-Path $project "package.json"))) {
-            throw "Project package.json not found."
-          }
-
-          $appPackage = Join-Path $project "artifacts/makhzani-pos/package.json"
-          if (-not (Test-Path $appPackage)) {
-            throw "Makhzani app package not found."
+          if (-not (Test-Path (Join-Path $app "package.json"))) {
+            throw "ملف تطبيق مخزني غير موجود."
           }
 
           "PROJECT_DIR=$project" | Out-File $env:GITHUB_ENV -Append
+          "APP_DIR=$app" | Out-File $env:GITHUB_ENV -Append
+
           Write-Host "Project: $project"
+          Write-Host "App: $app"
 
       - name: Install dependencies
         shell: pwsh
         working-directory: ${{ env.PROJECT_DIR }}
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build Windows installer
+      - name: Build Windows application
         shell: pwsh
         working-directory: ${{ env.PROJECT_DIR }}
         run: pnpm --filter @workspace/makhzani-pos desktop:dist
 
-      - name: Verify installer
+      - name: Verify Windows installer
         shell: pwsh
         run: |
-          $release = Join-Path $env:PROJECT_DIR "artifacts/makhzani-pos/release"
+          $release = Join-Path $env:APP_DIR "release"
 
           if (-not (Test-Path $release)) {
-            throw "Release folder was not created."
+            throw "مجلد release غير موجود بعد البناء."
           }
 
           $installers = @(
-            Get-ChildItem $release -Filter "*.exe" -File |
-            Where-Object { $_.Name -match 'setup|install' }
+            Get-ChildItem $release -Filter "*.exe" -Recurse -File |
+            Where-Object {
+              $_.Name -match 'setup|install'
+            }
           )
 
           if ($installers.Count -eq 0) {
-            Get-ChildItem $release -Recurse -File |
+            Write-Host "ملفات EXE الموجودة:"
+            Get-ChildItem $release -Filter "*.exe" -Recurse -File |
               Select-Object FullName, Length
-            throw "Windows Setup EXE was not generated."
+
+            throw "لم يتم إنشاء ملف Setup."
           }
 
           $output = Join-Path $env:GITHUB_WORKSPACE "installer-output"
@@ -111,16 +110,17 @@ jobs:
 
           foreach ($file in $installers) {
             if ($file.Length -lt 1MB) {
-              throw "Installer file is unexpectedly small."
+              throw "حجم ملف التثبيت غير طبيعي."
             }
+
             Copy-Item $file.FullName $output -Force
-            Write-Host "Verified: $($file.Name)"
+            Write-Host "Installer verified: $($file.Name)"
           }
 
       - name: Upload Windows Setup
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-V8.1-Windows-Setup
+          name: Makhzani-POS-V8.2-Windows-Setup
           path: installer-output/*.exe
           if-no-files-found: error
           retention-days: 30
