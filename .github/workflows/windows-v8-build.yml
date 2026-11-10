@@ -1,5 +1,5 @@
 
-name: Makhzani POS V8 - Windows Build
+name: Makhzani POS V8.1 - Windows Installer
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build Makhzani POS V8
+    name: Build Makhzani POS V8.1
     runs-on: windows-latest
     timeout-minutes: 90
 
@@ -31,30 +31,17 @@ jobs:
         with:
           node-version: 22
 
-      - name: Find or extract project
+      - name: Find V8.1 ZIP or project folder
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
           $project = $null
 
-          $workspace = Get-ChildItem $root -Filter "pnpm-workspace.yaml" -Recurse -File |
-            Where-Object { $_.FullName -notmatch '\\(node_modules|\.git)\\' } |
+          $zip = Get-ChildItem $root -Filter "*V8_1_Barcode_Camera_Fix*.zip" -File |
             Select-Object -First 1
 
-          if ($workspace) {
-            $project = $workspace.Directory.FullName
-          }
-
-          if (-not $project) {
-            $zip = Get-ChildItem $root -Filter "*.zip" -File |
-              Where-Object { $_.Name -like "*V8*" } |
-              Select-Object -First 1
-
-            if (-not $zip) {
-              throw "لم يتم العثور على مجلد المشروع أو ملف ZIP V8"
-            }
-
-            $extract = Join-Path $env:RUNNER_TEMP "MakhzaniV8"
+          if ($zip) {
+            $extract = Join-Path $env:RUNNER_TEMP "MakhzaniV81"
             New-Item -ItemType Directory -Force $extract | Out-Null
             Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
 
@@ -66,12 +53,24 @@ jobs:
             }
           }
 
+          if (-not $project) {
+            $workspace = Get-ChildItem $root -Filter "pnpm-workspace.yaml" -Recurse -File |
+              Where-Object {
+                $_.FullName -notmatch '\\(node_modules|\.git)\\'
+              } |
+              Select-Object -First 1
+
+            if ($workspace) {
+              $project = $workspace.Directory.FullName
+            }
+          }
+
           if (-not $project -or -not (Test-Path (Join-Path $project "package.json"))) {
-            throw "تعذر العثور على ملف package.json الرئيسي"
+            throw "لم يتم العثور على مشروع مخزني V8.1 أو ملف ZIP الخاص به."
           }
 
           if (-not (Test-Path (Join-Path $project "artifacts/makhzani-pos/package.json"))) {
-            throw "مجلد تطبيق مخزني غير موجود"
+            throw "مجلد تطبيق مخزني غير موجود داخل المشروع."
           }
 
           "PROJECT_DIR=$project" | Out-File $env:GITHUB_ENV -Append
@@ -79,15 +78,15 @@ jobs:
 
       - name: Install dependencies
         shell: pwsh
-        run: pnpm install --no-frozen-lockfile
         working-directory: ${{ env.PROJECT_DIR }}
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build Windows installer
         shell: pwsh
-        run: pnpm --filter @workspace/makhzani-pos desktop:dist
         working-directory: ${{ env.PROJECT_DIR }}
+        run: pnpm --filter @workspace/makhzani-pos desktop:dist
 
-      - name: Find EXE installer
+      - name: Find Windows installer
         shell: pwsh
         run: |
           $project = $env:PROJECT_DIR
@@ -100,12 +99,14 @@ jobs:
           )
 
           if ($files.Count -eq 0) {
-            Write-Host "لم يتم العثور على ملف EXE."
-            Write-Host "مجلدات البناء:"
+            Write-Host "No EXE installer found."
             Get-ChildItem $project -Directory -Recurse |
-              Where-Object { $_.Name -match 'release|dist|win-unpacked' } |
+              Where-Object {
+                $_.Name -match 'release|dist|win-unpacked'
+              } |
               Select-Object -ExpandProperty FullName
-            throw "لم يتم إنشاء ملف تثبيت Windows"
+
+            throw "لم يتم إنشاء ملف EXE."
           }
 
           $output = Join-Path $env:GITHUB_WORKSPACE "installer-output"
@@ -119,8 +120,7 @@ jobs:
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-V8-Windows
+          name: Makhzani-POS-V8.1-Windows
           path: installer-output/*.exe
           if-no-files-found: error
           retention-days: 30
-
