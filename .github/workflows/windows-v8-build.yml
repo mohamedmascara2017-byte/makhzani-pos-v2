@@ -1,4 +1,5 @@
 
+
 name: Makhzani POS V8.1 - Windows Installer
 
 on:
@@ -31,13 +32,13 @@ jobs:
         with:
           node-version: 22
 
-      - name: Find V8.1 ZIP or project folder
+      - name: Find and extract V8.1 project
         shell: pwsh
         run: |
           $root = $env:GITHUB_WORKSPACE
           $project = $null
 
-          $zip = Get-ChildItem $root -Filter "*V8_1_Barcode_Camera_Fix*.zip" -File |
+          $zip = Get-ChildItem $root -Filter "Makhzani_POS_V8_1_Barcode_Camera_Fix.zip" -File |
             Select-Object -First 1
 
           if ($zip) {
@@ -55,9 +56,7 @@ jobs:
 
           if (-not $project) {
             $workspace = Get-ChildItem $root -Filter "pnpm-workspace.yaml" -Recurse -File |
-              Where-Object {
-                $_.FullName -notmatch '\\(node_modules|\.git)\\'
-              } |
+              Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|_temp)\\' } |
               Select-Object -First 1
 
             if ($workspace) {
@@ -66,15 +65,16 @@ jobs:
           }
 
           if (-not $project -or -not (Test-Path (Join-Path $project "package.json"))) {
-            throw "لم يتم العثور على مشروع مخزني V8.1 أو ملف ZIP الخاص به."
+            throw "Project package.json not found."
           }
 
-          if (-not (Test-Path (Join-Path $project "artifacts/makhzani-pos/package.json"))) {
-            throw "مجلد تطبيق مخزني غير موجود داخل المشروع."
+          $appPackage = Join-Path $project "artifacts/makhzani-pos/package.json"
+          if (-not (Test-Path $appPackage)) {
+            throw "Makhzani app package not found."
           }
 
           "PROJECT_DIR=$project" | Out-File $env:GITHUB_ENV -Append
-          Write-Host "Project directory: $project"
+          Write-Host "Project: $project"
 
       - name: Install dependencies
         shell: pwsh
@@ -86,41 +86,41 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: pnpm --filter @workspace/makhzani-pos desktop:dist
 
-      - name: Find Windows installer
+      - name: Verify installer
         shell: pwsh
         run: |
-          $project = $env:PROJECT_DIR
+          $release = Join-Path $env:PROJECT_DIR "artifacts/makhzani-pos/release"
 
-          $files = @(
-            Get-ChildItem $project -Filter "*.exe" -Recurse -File |
-            Where-Object {
-              $_.FullName -notmatch '\\(node_modules|\.git)\\'
-            }
+          if (-not (Test-Path $release)) {
+            throw "Release folder was not created."
+          }
+
+          $installers = @(
+            Get-ChildItem $release -Filter "*.exe" -File |
+            Where-Object { $_.Name -match 'setup|install' }
           )
 
-          if ($files.Count -eq 0) {
-            Write-Host "No EXE installer found."
-            Get-ChildItem $project -Directory -Recurse |
-              Where-Object {
-                $_.Name -match 'release|dist|win-unpacked'
-              } |
-              Select-Object -ExpandProperty FullName
-
-            throw "لم يتم إنشاء ملف EXE."
+          if ($installers.Count -eq 0) {
+            Get-ChildItem $release -Recurse -File |
+              Select-Object FullName, Length
+            throw "Windows Setup EXE was not generated."
           }
 
           $output = Join-Path $env:GITHUB_WORKSPACE "installer-output"
           New-Item -ItemType Directory -Force $output | Out-Null
 
-          foreach ($file in $files) {
+          foreach ($file in $installers) {
+            if ($file.Length -lt 1MB) {
+              throw "Installer file is unexpectedly small."
+            }
             Copy-Item $file.FullName $output -Force
-            Write-Host "Installer found: $($file.FullName)"
+            Write-Host "Verified: $($file.Name)"
           }
 
-      - name: Upload Windows installer
+      - name: Upload Windows Setup
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-V8.1-Windows
+          name: Makhzani-POS-V8.1-Windows-Setup
           path: installer-output/*.exe
           if-no-files-found: error
           retention-days: 30
