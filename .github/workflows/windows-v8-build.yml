@@ -1,126 +1,44 @@
 
-name: Makhzani POS V8.2 - Windows Installer
+
+name: Build Makhzani POS Windows EXE
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-
-permissions:
-  contents: read
+    paths:
+      - '**'
+      - '.github/workflows/build-windows.yml'
 
 jobs:
-  build-windows:
-    name: Build Makhzani POS V8.2
+  build:
+    name: Build Windows Installer
     runs-on: windows-latest
-    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.8.1
-          run_install: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Extract V8.2 project
-        shell: pwsh
-        run: |
-          $root = $env:GITHUB_WORKSPACE
-          $zipName = "Makhzani_POS_V8_2_USB_Bluetooth_Scanner_Fix.zip"
-          $zip = Join-Path $root $zipName
-
-          if (-not (Test-Path $zip)) {
-            throw "لم يتم العثور على ملف V8.2 ZIP: $zipName"
-          }
-
-          $extract = Join-Path $env:RUNNER_TEMP "MakhzaniV82"
-          New-Item -ItemType Directory -Force $extract | Out-Null
-
-          Expand-Archive -Path $zip -DestinationPath $extract -Force
-
-          $workspace = Get-ChildItem $extract -Filter "pnpm-workspace.yaml" -Recurse -File |
-            Select-Object -First 1
-
-          if (-not $workspace) {
-            throw "ملف pnpm-workspace.yaml غير موجود."
-          }
-
-          $project = $workspace.Directory.FullName
-          $app = Join-Path $project "artifacts/makhzani-pos"
-
-          if (-not (Test-Path (Join-Path $project "package.json"))) {
-            throw "ملف package.json الرئيسي غير موجود."
-          }
-
-          if (-not (Test-Path (Join-Path $app "package.json"))) {
-            throw "ملف تطبيق مخزني غير موجود."
-          }
-
-          "PROJECT_DIR=$project" | Out-File $env:GITHUB_ENV -Append
-          "APP_DIR=$app" | Out-File $env:GITHUB_ENV -Append
-
-          Write-Host "Project: $project"
-          Write-Host "App: $app"
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
 
       - name: Install dependencies
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
-      - name: Build Windows application
-        shell: pwsh
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: pnpm --filter @workspace/makhzani-pos desktop:dist
+      - name: Build Windows EXE
+        working-directory: artifacts/makhzani-pos
+        run: pnpm run desktop:dist
 
-      - name: Verify Windows installer
-        shell: pwsh
-        run: |
-          $release = Join-Path $env:APP_DIR "release"
-
-          if (-not (Test-Path $release)) {
-            throw "مجلد release غير موجود بعد البناء."
-          }
-
-          $installers = @(
-            Get-ChildItem $release -Filter "*.exe" -Recurse -File |
-            Where-Object {
-              $_.Name -match 'setup|install'
-            }
-          )
-
-          if ($installers.Count -eq 0) {
-            Write-Host "ملفات EXE الموجودة:"
-            Get-ChildItem $release -Filter "*.exe" -Recurse -File |
-              Select-Object FullName, Length
-
-            throw "لم يتم إنشاء ملف Setup."
-          }
-
-          $output = Join-Path $env:GITHUB_WORKSPACE "installer-output"
-          New-Item -ItemType Directory -Force $output | Out-Null
-
-          foreach ($file in $installers) {
-            if ($file.Length -lt 1MB) {
-              throw "حجم ملف التثبيت غير طبيعي."
-            }
-
-            Copy-Item $file.FullName $output -Force
-            Write-Host "Installer verified: $($file.Name)"
-          }
-
-      - name: Upload Windows Setup
+      - name: Upload Windows Installer
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-V8.2-Windows-Setup
-          path: installer-output/*.exe
+          name: Makhzani-POS-Windows-Installer
+          path: artifacts/makhzani-pos/release/*.exe
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14
