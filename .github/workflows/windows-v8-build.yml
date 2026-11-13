@@ -28,6 +28,19 @@ jobs:
         with:
           version: 10.8.1
 
+      - name: Verify project files
+        shell: pwsh
+        run: |
+          if (!(Test-Path "package.json")) {
+            throw "package.json not found in repository root"
+          }
+          if (!(Test-Path "pnpm-lock.yaml")) {
+            throw "pnpm-lock.yaml not found in repository root"
+          }
+          if (!(Test-Path "artifacts/makhzani-pos/package.json")) {
+            throw "Windows app package.json not found"
+          }
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -35,10 +48,21 @@ jobs:
         working-directory: artifacts/makhzani-pos
         run: pnpm run desktop:dist
 
+      - name: Verify EXE
+        shell: pwsh
+        run: |
+          if (!(Test-Path "artifacts/makhzani-pos/release")) {
+            throw "Release folder not found"
+          }
+          $exe = Get-ChildItem "artifacts/makhzani-pos/release" -Filter "*.exe" -Recurse
+          if (!$exe) {
+            throw "No Windows EXE was generated"
+          }
+
       - name: Upload Windows Installer
         uses: actions/upload-artifact@v4
         with:
           name: Makhzani-POS-Windows-Installer
-          path: artifacts/makhzani-pos/release/*.exe
+          path: artifacts/makhzani-pos/release/**/*.exe
           if-no-files-found: error
           retention-days: 14
