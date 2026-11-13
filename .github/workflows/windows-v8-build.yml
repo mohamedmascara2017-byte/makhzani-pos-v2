@@ -1,29 +1,24 @@
 
-name: Build Makhzani POS V8.3 APK
+name: Build Makhzani POS V8.3 Windows EXE
 
 on:
   workflow_dispatch:
   push:
     paths:
       - 'Makhzani_POS_V8_3_Updated.zip'
-      - '.github/workflows/build-apk.yml'
+      - '.github/workflows/build-windows.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: makhzani-pos-v83-apk
+  group: makhzani-pos-windows
   cancel-in-progress: false
 
 jobs:
-  build-apk:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
     timeout-minutes: 60
-
-    env:
-      CI: 1
-      EXPO_NO_TELEMETRY: 1
-      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=true
 
     steps:
       - name: Checkout repository
@@ -33,7 +28,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ''
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -41,42 +35,56 @@ jobs:
           version: 10.8.1
           run_install: false
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Extract updated project
-        shell: bash
+      - name: Extract Makhzani POS V8.3
+        shell: pwsh
         run: |
-          if [ ! -f Makhzani_POS_V8_3_Updated.zip ]; then
-            echo "Updated ZIP file not found!"
-            exit 1
-          fi
+          if (!(Test-Path "Makhzani_POS_V8_3_Updated.zip")) {
+            throw "Updated ZIP file not found!"
+          }
 
-          mkdir -p project-unpacked
-          unzip -q Makhzani_POS_V8_3_Updated.zip -d project-unpacked
+          New-Item -ItemType Directory -Force -Path "project-unpacked" | Out-Null
+
+          Expand-Archive `
+            -Path "Makhzani_POS_V8_3_Updated.zip" `
+            -DestinationPath "project-unpacked" `
+            -Force
+
+          if (!(Test-Path "project-unpacked/package.json")) {
+            throw "Project package.json not found!"
+          }
 
       - name: Install dependencies
         working-directory: project-unpacked
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Generate Android project
-        working-directory: project-unpacked/artifacts/makhzani-pos
-        run: pnpm exec expo prebuild --platform android --no-install --clean
-
-      - name: Build Release APK
-        working-directory: project-unpacked/artifacts/makhzani-pos/android
+        shell: pwsh
         run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          pnpm install --no-frozen-lockfile
 
-      - name: Upload APK
+      - name: Build Windows EXE
+        working-directory: project-unpacked
+        shell: pwsh
+        run: |
+          pnpm --filter @workspace/makhzani-pos desktop:dist
+
+      - name: Verify EXE
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem `
+            "project-unpacked/artifacts/makhzani-pos/release" `
+            -Filter "*.exe" `
+            -Recurse
+
+          if (!$exe) {
+            throw "Windows EXE was not generated!"
+          }
+
+          Write-Host "EXE successfully generated:"
+          $exe | ForEach-Object { Write-Host $_.FullName }
+
+      - name: Upload Windows Installer
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-V8.3-APK
-          path: project-unpacked/artifacts/makhzani-pos/android/app/build/outputs/apk/release/app-release.apk
+          name: Makhzani-POS-V8.3-Windows-Installer
+          path: |
+            project-unpacked/artifacts/makhzani-pos/release/*.exe
           if-no-files-found: error
           retention-days: 30
-
