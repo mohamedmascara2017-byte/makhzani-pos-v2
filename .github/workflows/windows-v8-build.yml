@@ -1,17 +1,29 @@
 
-name: Build Makhzani POS Windows EXE
+name: Build Makhzani POS V8.3 APK
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '**'
-      - '.github/workflows/build-windows.yml'
+      - 'Makhzani_POS_V8_3_Updated.zip'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: makhzani-pos-v83-apk
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build Windows Installer
-    runs-on: windows-latest
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      CI: 1
+      EXPO_NO_TELEMETRY: 1
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=true
 
     steps:
       - name: Checkout repository
@@ -21,133 +33,49 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: ''
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.8.1
+          run_install: false
 
-      - name: Find and extract Makhzani project
-        shell: pwsh
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract updated project
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
+          if [ ! -f Makhzani_POS_V8_3_Updated.zip ]; then
+            echo "Updated ZIP file not found!"
+            exit 1
+          fi
 
-          function Find-DesktopApp($base) {
-            $packages = Get-ChildItem -Path $base -Filter "package.json" -File -Recurse -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -notmatch '[\\/](node_modules|\.git)[\\/]' }
-
-            foreach ($file in $packages) {
-              try {
-                $pkg = Get-Content $file.FullName -Raw | ConvertFrom-Json
-                $script = $pkg.scripts.PSObject.Properties['desktop:dist']
-
-                if ($null -ne $script) {
-                  return [PSCustomObject]@{
-                    AppDir = $file.Directory.FullName
-                    Package = $file.FullName
-                  }
-                }
-              } catch {}
-            }
-
-            return $null
-          }
-
-          $app = Find-DesktopApp $env:GITHUB_WORKSPACE
-
-          if ($null -eq $app) {
-            $zips = Get-ChildItem $env:GITHUB_WORKSPACE -Filter "*.zip" -File -Recurse |
-              Where-Object { $_.FullName -notmatch '[\\/](node_modules|\.git)[\\/]' }
-
-            foreach ($zip in $zips) {
-              $destination = Join-Path $env:RUNNER_TEMP ("makhzani-" + [guid]::NewGuid().ToString("N"))
-              New-Item -ItemType Directory -Path $destination -Force | Out-Null
-
-              Write-Host "Checking archive: $($zip.Name)"
-              Expand-Archive -LiteralPath $zip.FullName -DestinationPath $destination -Force
-
-              $app = Find-DesktopApp $destination
-
-              if ($null -ne $app) {
-                Write-Host "Project found inside $($zip.Name)"
-                break
-              }
-            }
-          }
-
-          if ($null -eq $app) {
-            throw "Could not find a package.json containing the desktop:dist script."
-          }
-
-          $appDir = $app.AppDir
-          $workspaceRoot = $null
-          $lockRoot = $null
-          $current = Get-Item $appDir
-
-          while ($null -ne $current) {
-            if (Test-Path (Join-Path $current.FullName "pnpm-workspace.yaml")) {
-              $workspaceRoot = $current.FullName
-            }
-
-            if ($null -eq $lockRoot -and (Test-Path (Join-Path $current.FullName "pnpm-lock.yaml"))) {
-              $lockRoot = $current.FullName
-            }
-
-            $current = $current.Parent
-          }
-
-          if ([string]::IsNullOrWhiteSpace($workspaceRoot)) {
-            $workspaceRoot = $lockRoot
-          }
-
-          if ([string]::IsNullOrWhiteSpace($workspaceRoot)) {
-            $workspaceRoot = $appDir
-          }
-
-          "BUILD_ROOT=$workspaceRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "APP_DIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-          Write-Host "Workspace: $workspaceRoot"
-          Write-Host "Application: $appDir"
+          mkdir -p project-unpacked
+          unzip -q Makhzani_POS_V8_3_Updated.zip -d project-unpacked
 
       - name: Install dependencies
-        shell: pwsh
+        working-directory: project-unpacked
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate Android project
+        working-directory: project-unpacked/artifacts/makhzani-pos
+        run: pnpm exec expo prebuild --platform android --no-install --clean
+
+      - name: Build Release APK
+        working-directory: project-unpacked/artifacts/makhzani-pos/android
         run: |
-          $ErrorActionPreference = "Stop"
-          Set-Location $env:BUILD_ROOT
-          pnpm install --no-frozen-lockfile
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Build Windows EXE
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Set-Location $env:APP_DIR
-          pnpm run desktop:dist
-
-      - name: Find generated EXE
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $output = Join-Path $env:GITHUB_WORKSPACE "windows-output"
-          New-Item -ItemType Directory -Path $output -Force | Out-Null
-
-          $files = Get-ChildItem -Path $env:APP_DIR -Filter "*.exe" -File -Recurse |
-            Where-Object { $_.FullName -notmatch '[\\/](node_modules|\.git)[\\/]' }
-
-          if (!$files) {
-            throw "Build finished but no EXE file was found."
-          }
-
-          foreach ($file in $files) {
-            Copy-Item $file.FullName -Destination $output -Force
-            Write-Host "Found installer: $($file.Name)"
-          }
-
-      - name: Upload Windows Installer
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Makhzani-POS-Windows-Installer
-          path: windows-output/*.exe
+          name: Makhzani-POS-V8.3-APK
+          path: project-unpacked/artifacts/makhzani-pos/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
