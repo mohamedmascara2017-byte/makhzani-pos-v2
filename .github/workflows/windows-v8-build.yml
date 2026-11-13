@@ -76,7 +76,7 @@ jobs:
           }
 
           if ($null -eq $app) {
-            throw "Could not find a package.json containing the desktop:dist script. Check that the Windows project ZIP or source files are uploaded to the repository."
+            throw "Could not find a package.json containing the desktop:dist script."
           }
 
           $appDir = $app.AppDir
@@ -104,8 +104,8 @@ jobs:
             $workspaceRoot = $appDir
           }
 
-          Add-Content $env:GITHUB_ENV "BUILD_ROOT=$workspaceRoot"
-          Add-Content $env:GITHUB_ENV "APP_DIR=$appDir"
+          "BUILD_ROOT=$workspaceRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "APP_DIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           Write-Host "Workspace: $workspaceRoot"
           Write-Host "Application: $appDir"
@@ -115,12 +115,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-Location $env:BUILD_ROOT
-
-          if (Test-Path "pnpm-lock.yaml") {
-            pnpm install --frozen-lockfile
-          } else {
-            pnpm install
-          }
+          pnpm install --no-frozen-lockfile
 
       - name: Build Windows EXE
         shell: pwsh
